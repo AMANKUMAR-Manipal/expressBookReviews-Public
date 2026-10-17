@@ -1,6 +1,8 @@
+
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const session = require('express-session')
+const session = require('express-session');
+
 const customer_routes = require('./router/auth_users.js').authenticated;
 const genl_routes = require('./router/general.js').general;
 
@@ -8,15 +10,66 @@ const app = express();
 
 app.use(express.json());
 
-app.use("/customer",session({secret:"fingerprint_customer",resave: true, saveUninitialized: true}))
+const JWT_SECRET =
+    process.env.JWT_SECRET || 'development_only_change_this_secret';
 
-app.use("/customer/auth/*", function auth(req,res,next){
-//Write the authenication mechanism here
+// Apply sessions to customer routes
+app.use(
+    '/customer',
+    session({
+        secret: process.env.SESSION_SECRET || 'development_session_secret',
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            httpOnly: true,
+            sameSite: 'lax'
+        }
+    })
+);
+
+// Protect customer review-management routes
+app.use('/customer/auth', (req, res, next) => {
+    const authorization = req.headers.authorization;
+
+    if (!authorization || !authorization.startsWith('Bearer ')) {
+        return res.status(401).json({
+            message: 'Authentication required. Please log in.'
+        });
+    }
+
+    const token = authorization.slice(7).trim();
+
+    if (!token) {
+        return res.status(401).json({
+            message: 'Authentication token is missing.'
+        });
+    }
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        req.user = { username: decoded.username };
+
+        if (req.session) {
+            req.session.username = decoded.username;
+        }
+
+        next();
+    } catch (error) {
+        return res.status(401).json({
+            message: 'Invalid or expired authentication token.'
+        });
+    }
 });
- 
-const PORT =5000;
 
-app.use("/customer", customer_routes);
-app.use("/", genl_routes);
+// Customer login and protected review routes
+app.use('/customer', customer_routes);
 
-app.listen(PORT,()=>console.log("Server is running"));
+// Public book routes
+app.use('/', genl_routes);
+
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
